@@ -4,7 +4,6 @@ from typing import Annotated, Literal
 from IPython.display import Image, display
 from langchain.chat_models import init_chat_model
 from langchain.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain.tools import tool
 from langchain_tavily import TavilySearch
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
@@ -13,7 +12,7 @@ from typing_extensions import TypedDict
 def create_agent_with_search_tool():
     # Step 1: Define tools and model
     model = init_chat_model(
-        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
         temperature=0
     )
 
@@ -31,20 +30,10 @@ def create_agent_with_search_tool():
         # include_domains=None,
         # exclude_domains=None
     )
-    
-    @tool
-    def multiply(a: int, b: int) -> int:
-        """Multiply `a` and `b`.
-
-        Args:
-            a: First int
-            b: Second int
-        """
-        return a * b
 
 
     # Augment the LLM with tools
-    tools = [multiply,search_tool]
+    tools = [search_tool]
     tools_by_name = {tool.name: tool for tool in tools}
     model_with_tools = model.bind_tools(tools)
 
@@ -121,12 +110,12 @@ def create_agent_with_search_tool():
     return agent
 
 
-def run_agent_with_search_tool(agent):
+def run_agent_with_search_tool(agent, question):
     # Show the agent
     display(Image(agent.get_graph(xray=True).draw_mermaid_png()))
 
     # Invoke
-    messages = [HumanMessage(content="Multiply 3 and 4.")]
+    messages = [HumanMessage(content=question)]
     messages = agent.invoke({"messages": messages})
     for m in messages["messages"]:
         m.pretty_print()
