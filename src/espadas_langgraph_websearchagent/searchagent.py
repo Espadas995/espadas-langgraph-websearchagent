@@ -1,14 +1,36 @@
 import operator
+from datetime import date
 from typing import Annotated, Literal
 
 from IPython.display import Image, display
 from langchain.chat_models import init_chat_model
-from langchain.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain.messages import (
+    AIMessage,
+    AnyMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_tavily import TavilySearch
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
+KNOWLEDGE_CUTOFF_HAIKU = "July 2025"
+SYSTEM_PROMPT = """You are a helpful assistant. Today's date is {today}.
+Your training knowledge is reliable up to {cutoff}.
 
+Answer directly from your own knowledge when the question is about stable facts,
+concepts, or events clearly before your knowledge cutoff.
+
+Use the tavily_search tool ONLY when:
+- the question is about events, releases, or data after your knowledge cutoff;
+- the information changes frequently (news, prices, weather, scores, software versions);
+- the user explicitly asks you to search or wants sources;
+- you are not confident your answer is still accurate.
+
+When you answer using search results, cite the URLs you used."""
+
+# Definition of the agent
 def create_agent_with_search_tool():
     # Step 1: Define tools and model
     model = init_chat_model(
@@ -45,22 +67,18 @@ def create_agent_with_search_tool():
 
     # Step 3: Define model node
     def llm_call(state: MessagesState):
-        """LLM decides whether to call a tool or not"""
+        """LLM decides whether to answer directly or search the web"""
+
+        system = SystemMessage(
+            content=SYSTEM_PROMPT.format(
+                today=date.today().isoformat(), cutoff=KNOWLEDGE_CUTOFF_HAIKU
+            )
+        )
 
         return {
-            "messages": [
-                model_with_tools.invoke(
-                    [
-                        SystemMessage(
-                            content="You are a helpful assistant tasked with performing arithmetic on a set of inputs."
-                        )
-                    ]
-                    + state["messages"]
-                )
-            ],
-            "llm_calls": state.get('llm_calls', 0) + 1
+            "messages": [model_with_tools.invoke([system] + state["messages"])],
+            "llm_calls": state.get("llm_calls", 0) + 1,
         }
-
 
     # Step 4: Define tool node
     def tool_node(state: MessagesState):
@@ -110,6 +128,70 @@ def create_agent_with_search_tool():
     return agent
 
 
+# Show token usage by the agent
+def get_token_usage(result):
+    # Counter
+    input_tokens, output_tokens, tool_call_tokens, tool_result_tokens = 0, 0, 0, 0
+
+    # Previous message from Haiku
+    previous_message = None
+
+    for message in result["messages"]:
+        # Only for AIMessage, not Human nor Tool
+        if not isinstance(message, AIMessage):
+            continue
+
+        # Haiku tokens
+        tokens_in = message.usage_metadata["input_tokens"]
+        tokens_out = message.usage_metadata["output_tokens"]
+
+        # Sum tokens
+        input_tokens += tokens_in
+        output_tokens += tokens_out
+
+        # Tool call tokens
+        if message.tool_calls:
+            tool_call_tokens += tokens_out
+
+        # Tavily result tokens (input growth after a tool call)
+        if previous_message is not None and previous_message.tool_calls:
+            previous_in = previous_message.usage_metadata["input_tokens"]
+            previous_out = previous_message.usage_metadata["output_tokens"]
+            tavily_tokens = tokens_in - previous_in - previous_out
+            tool_result_tokens += tavily_tokens
+
+        previous_message = message
+
+    total_tokens = input_tokens + output_tokens
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "tool_call_tokens": tool_call_tokens,
+        "tool_result_tokens": tool_result_tokens,
+    }
+
+
+# Print token usage in a readable format
+def print_token_usage(usage):
+    print("===== Token usage =====")
+    print(f"Input tokens:       {usage['input_tokens']:>9,}")
+    print(f"Output tokens:      {usage['output_tokens']:>9,}")
+    print(f"Total tokens:       {usage['total_tokens']:>9,}")
+    print()
+
+    if usage["tool_call_tokens"] > 0:
+        percentage = usage["tool_result_tokens"] / usage["total_tokens"] * 100
+
+        print("Web search: yes")
+        print(f"  Tool call tokens:   {usage['tool_call_tokens']:>7,}")
+        print(f"  Tool result tokens: {usage['tool_result_tokens']:>7,}  ({percentage:.0f}% of total)")
+    else:
+        print("Web search: no")
+
+
+# Run the agent
 def run_agent_with_search_tool(agent, question):
     # Show the agent
     display(Image(agent.get_graph(xray=True).draw_mermaid_png()))
@@ -119,3 +201,7 @@ def run_agent_with_search_tool(agent, question):
     messages = agent.invoke({"messages": messages})
     for m in messages["messages"]:
         m.pretty_print()
+
+    # Token usage
+    usage = get_token_usage(messages)
+    print_token_usage(usage)
