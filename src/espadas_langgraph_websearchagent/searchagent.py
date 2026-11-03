@@ -15,7 +15,7 @@ from langchain_tavily import TavilySearch
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-KNOWLEDGE_CUTOFF_HAIKU = "July 2025"
+KNOWLEDGE_CUTOFF_HAIKU = "February 2025"
 SYSTEM_PROMPT = """You are a helpful assistant. Today's date is {today}.
 Your training knowledge is reliable up to {cutoff}.
 
@@ -88,7 +88,7 @@ def create_agent_with_search_tool():
         for tool_call in state["messages"][-1].tool_calls:
             tool = tools_by_name[tool_call["name"]]
             observation = tool.invoke(tool_call["args"])
-            result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+            result.append(ToolMessage(content=observation, artifact=observation, tool_call_id=tool_call["id"]))
         return {"messages": result}
 
     # Step 5: Define logic to determine whether to end
@@ -131,7 +131,7 @@ def create_agent_with_search_tool():
 # Show token usage by the agent
 def get_token_usage(result):
     # Counter
-    input_tokens, output_tokens, tool_call_tokens, tool_result_tokens = 0, 0, 0, 0
+    input_tokens, output_tokens, tool_call_output_tokens, tool_result_tokens = 0, 0, 0, 0
 
     # Previous message from Haiku
     previous_message = None
@@ -151,7 +151,7 @@ def get_token_usage(result):
 
         # Tool call tokens
         if message.tool_calls:
-            tool_call_tokens += tokens_out
+            tool_call_output_tokens += tokens_out
 
         # Tavily result tokens (input growth after a tool call)
         if previous_message is not None and previous_message.tool_calls:
@@ -168,7 +168,7 @@ def get_token_usage(result):
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
-        "tool_call_tokens": tool_call_tokens,
+        "tool_call_output_tokens": tool_call_output_tokens,
         "tool_result_tokens": tool_result_tokens,
     }
 
@@ -181,11 +181,11 @@ def print_token_usage(usage):
     print(f"Total tokens:       {usage['total_tokens']:>9,}")
     print()
 
-    if usage["tool_call_tokens"] > 0:
+    if usage["tool_call_output_tokens"] > 0:
         percentage = usage["tool_result_tokens"] / usage["total_tokens"] * 100
 
         print("Web search: yes")
-        print(f"  Tool call tokens:   {usage['tool_call_tokens']:>7,}")
+        print(f"  Tool call output tokens:   {usage['tool_call_output_tokens']:>7,}")
         print(f"  Tool result tokens: {usage['tool_result_tokens']:>7,}  ({percentage:.0f}% of total)")
     else:
         print("Web search: no")
@@ -205,3 +205,4 @@ def run_agent_with_search_tool(agent, question):
     # Token usage
     usage = get_token_usage(messages)
     print_token_usage(usage)
+    return messages
